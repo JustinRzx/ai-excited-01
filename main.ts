@@ -1,49 +1,58 @@
-// ai-excited-01: Make the AI judge excited
-// Image: baby golden dragon hatching from a golden egg (1024x1024, 444,716 bytes)
+/*
+ ai-excited-01: Make the AI judge excited
+ Image: baby golden dragon hatching from a golden egg on a floating island
+ 1024x1024, 444,716 bytes
+ This program copies the curated `entry.png` (bundled beside this script)
+ to the runtime output directory atomically, then verifies the copy bytes.
+ Exits with code 5 on any mismatch.
+*/
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import crypto from 'crypto';
 
-const SRC_NAME = 'entry.png';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const sourcePath = path.resolve(__dirname, SRC_NAME);
-const outDir = process.env.MAKEFUN_OUTPUT_DIR || '/output';
-const outFinal = path.join(outDir, SRC_NAME);
-const tempName = `.${SRC_NAME}.tmp.${process.pid}.${Date.now()}`;
-const outTemp = path.join(outDir, tempName);
 
-function die(msg: string, code = 1): never {
-  console.error(msg);
-  process.exit(code);
-}
+async function main(): Promise<void> {
+  console.log('ai-excited-01: starting copy at', new Date().toISOString());
 
-try {
-  fs.mkdirSync(outDir, { recursive: true });
-  const srcBuf = fs.readFileSync(sourcePath);
+  const src = path.join(__dirname, 'entry.png');
+  const outDir = process.env.MAKEFUN_OUTPUT_DIR || '/output';
+  const dest = path.join(outDir, 'entry.png');
 
-  fs.writeFileSync(outTemp, srcBuf, { flag: 'w' });
+  // Ensure output directory exists
+  await fs.promises.mkdir(outDir, { recursive: true });
 
-  // Ensure data hit the disk for the temporary file.
-  const fd = fs.openSync(outTemp, 'r');
+  // Read the source bytes (the curated image bundled with the repo)
+  const srcBuf = await fs.promises.readFile(src);
+
+  // Write atomically to a temp file in the same directory, fsync, then rename
+  const tmp = dest + '.tmp-' + crypto.randomBytes(8).toString('hex');
+
+  // Use synchronous fd operations to ensure fsync is available and straightforward
+  const fd = fs.openSync(tmp, 'w');
   try {
+    fs.writeSync(fd, srcBuf, 0, srcBuf.length, null as unknown as number | null);
     fs.fsyncSync(fd);
   } finally {
     fs.closeSync(fd);
   }
 
-  // Atomic replace
-  fs.renameSync(outTemp, outFinal);
+  fs.renameSync(tmp, dest);
 
-  // Verify byte-for-byte equality
-  const written = fs.readFileSync(outFinal);
-  if (!Buffer.from(written).equals(Buffer.from(srcBuf))) {
-    die('Verification failed: written file does not match source', 5);
+  // Verify the written file bytes exactly match the source
+  const got = await fs.promises.readFile(dest);
+  if (!srcBuf.equals(got)) {
+    console.error('ERROR: byte mismatch after copy');
+    process.exit(5);
   }
 
-  console.log('dragon image written to', outFinal);
-  process.exit(0);
-} catch (err) {
-  die('Error: ' + String(err), 2);
+  console.log('Wrote', dest, '(', srcBuf.length, 'bytes )');
 }
+
+main().catch((err) => {
+  console.error('UNCAUGHT ERROR:', err && (err.stack || err));
+  process.exit(2);
+});
